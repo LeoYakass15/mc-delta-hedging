@@ -1,7 +1,7 @@
-"""Formules fermées de Black-Scholes (prix et grecques) pour options européennes.
+"""Closed-form Black-Scholes prices and Greeks for European options.
 
-Servent de référence pour valider le pricer Monte Carlo et de deltas pour la couverture.
-Toutes les fonctions sont vectorisées : S, T, sigma peuvent être des tableaux numpy.
+Used as the benchmark for the Monte Carlo pricer and as the delta for hedging.
+All functions are vectorised: S, T and sigma may be numpy arrays.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ def _d1_d2(S, K, T, r, sigma, q=0.0):
 
 
 def bs_price(S, K, T, r, sigma, option="call", q=0.0):
-    """Prix Black-Scholes d'un call ou put européen (T = 0 -> payoff)."""
+    """Black-Scholes price of a European call or put (returns the payoff when T = 0)."""
     S, T = np.asarray(S, float), np.asarray(T, float)
     payoff = np.maximum(S - K, 0.0) if option == "call" else np.maximum(K - S, 0.0)
     d1, d2 = _d1_d2(S, K, T, r, sigma, q)
@@ -27,12 +27,12 @@ def bs_price(S, K, T, r, sigma, option="call", q=0.0):
     elif option == "put":
         px = K * df_r * norm.cdf(-d2) - S * df_q * norm.cdf(-d1)
     else:
-        raise ValueError("option doit valoir 'call' ou 'put'")
+        raise ValueError("option must be 'call' or 'put'")
     return np.where(T > 0, px, payoff)
 
 
 def bs_delta(S, K, T, r, sigma, option="call", q=0.0):
-    """Delta Black-Scholes. À maturité, delta = indicatrice d'exercice."""
+    """Black-Scholes delta. At expiry, delta is the exercise indicator."""
     S, T = np.asarray(S, float), np.asarray(T, float)
     d1, _ = _d1_d2(S, K, T, r, sigma, q)
     if option == "call":
@@ -40,7 +40,7 @@ def bs_delta(S, K, T, r, sigma, option="call", q=0.0):
     elif option == "put":
         live, expiry = np.exp(-q * T) * (norm.cdf(d1) - 1.0), -(S < K).astype(float)
     else:
-        raise ValueError("option doit valoir 'call' ou 'put'")
+        raise ValueError("option must be 'call' or 'put'")
     return np.where(T > 0, live, expiry)
 
 
@@ -50,6 +50,6 @@ def bs_gamma(S, K, T, r, sigma, q=0.0):
 
 
 def bs_vega(S, K, T, r, sigma, q=0.0):
-    """Vega (dérivée par rapport à sigma, pour 1.00 de vol, pas 1%)."""
+    """Vega (derivative with respect to sigma, per 1.00 of vol, not per 1%)."""
     d1, _ = _d1_d2(S, K, T, r, sigma, q)
     return S * np.exp(-q * T) * norm.pdf(d1) * np.sqrt(T)

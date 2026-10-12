@@ -1,8 +1,9 @@
-"""Tests (pytest). Lancer : python -m pytest -q"""
+"""Unit tests (pytest). Run with: python -m pytest -q"""
 import numpy as np
 
 from mchedge import (bs_delta, bs_price, derman_kamal_std, mc_european_price,
                      simulate_delta_hedge, simulate_gbm_paths)
+from mchedge.analysis import mc_vs_bs_table
 
 P = dict(S0=100.0, K=105.0, T=1.0, r=0.03, sigma=0.25)
 
@@ -28,6 +29,14 @@ def test_mc_price_within_confidence_interval():
             assert abs(res.price - ref) < 4 * res.std_error
 
 
+def test_mc_matches_bs_across_option_grid():
+    # 60 options: strikes 80-120, vols 10-40%, maturities 3m and 1y, calls and puts
+    val = mc_vs_bs_table(n_paths=100_000, seed=10)
+    assert val["bs_in_ci95"].mean() >= 0.85          # ~95% expected
+    assert abs(val["z"].mean()) < 0.5                 # no systematic bias
+    assert val["abs_error"].abs().max() < 0.05        # largest gap in price units
+
+
 def test_variance_reduction_helps():
     plain = mc_european_price(**P, n_paths=100_000, antithetic=False, control_variate=False, seed=2)
     best = mc_european_price(**P, n_paths=100_000, seed=2)
@@ -50,11 +59,11 @@ def test_hedge_unbiased_and_std_close_to_theory():
 def test_hedge_error_scales_as_inverse_sqrt_n():
     s1 = simulate_delta_hedge(n_rebal=50, n_paths=20_000, seed=5).std
     s2 = simulate_delta_hedge(n_rebal=800, n_paths=20_000, seed=6).std
-    assert 3.4 < s1 / s2 < 4.6  # théorie : sqrt(16) = 4
+    assert 3.4 < s1 / s2 < 4.6  # theory: sqrt(16) = 4
 
 
 def test_vol_mismatch_sign():
-    # vendre à 20 % quand la vol réalisée est 30 % fait perdre de l'argent
+    # selling at 20% vol when realised vol is 30% loses money
     res = simulate_delta_hedge(sigma_real=0.30, sigma_implied=0.20, n_rebal=252, n_paths=10_000, seed=7)
     expected = bs_price(100, 100, 1, 0.02, 0.2) - bs_price(100, 100, 1, 0.02, 0.3)
     assert res.mean < 0

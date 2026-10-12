@@ -1,31 +1,42 @@
-# Monte Carlo pricing & discrete delta hedging
+# Monte Carlo Pricing & Discrete Delta Hedging
 
-Pricer Monte Carlo pour options européennes, simulation de couverture delta discrète
-et analyse de l'erreur de couverture en fonction de la volatilité et de la fréquence
-de rebalancement.
+Monte Carlo pricer for European options, simulation of discrete delta hedging, and
+analysis of the hedging error as a function of volatility and rebalancing frequency.
 
-## Structure
+![Hedging error vs rebalancing frequency](results/02_std_vs_rebal.png)
+
+*The hedging error decays as 1/√N for every volatility level, and the simulations
+match the Derman–Kamal approximation √(π/4)·vega·σ/√N to within ~2%.*
+
+## Project structure
 
 ```
 mchedge/
-  black_scholes.py   formules fermées (prix, delta, gamma, vega) — référence
-  monte_carlo.py     pricer MC : GBM exact, antithétiques, variable de contrôle, IC 95 %
-  hedging.py         simulation de couverture delta discrète (vectorisée sur les trajectoires)
-  analysis.py        études paramétriques (grilles σ × N, vol mal spécifiée, coûts)
-  plots.py           graphiques matplotlib
-run_analysis.py      lance toutes les études -> results/ (PNG + CSV)
-tests/               tests pytest (parité call-put, IC du MC, loi en 1/√N, ...)
+  black_scholes.py   closed-form prices and Greeks (price, delta, gamma, vega) — benchmark
+  monte_carlo.py     MC pricer: exact GBM, antithetic variates, control variate, 95% CI
+  hedging.py         discrete delta-hedging simulation (vectorised across paths)
+  analysis.py        parametric studies (MC validation, σ × N grid, vol mismatch, costs)
+  plots.py           matplotlib charts
+run_analysis.py      runs every study -> results/ (PNG + CSV)
+tests/               pytest suite (put-call parity, MC vs BS, 1/√N scaling, ...)
 ```
 
-## Installation et lancement
+## Getting started
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-python run_analysis.py              # ~25 s ; options : --paths, --sigma, --tc, --option put, ...
-python -m pytest -q
+
+python run_analysis.py             # ~30 s; see --help for options
+python -m pytest -q                # 11 tests
 ```
 
-Exemple d'utilisation directe :
+All runs use a fixed random seed (`--seed 42`), so results are reproducible.
+Change it with `--seed` to see Monte Carlo noise. Other options include `--sigma`,
+`--option put`, `--tc` (transaction cost) and `--paths`.
+
+Direct use from Python:
 
 ```python
 from mchedge import mc_european_price, simulate_delta_hedge
@@ -35,42 +46,79 @@ res = simulate_delta_hedge(sigma_real=0.2, n_rebal=52, n_paths=20_000, seed=0)
 print(res.summary())
 ```
 
-## Méthodologie
+## Methodology
 
-**Pricer.** Sous la mesure risque-neutre, `S_T = S0 exp((r − q − σ²/2)T + σ√T Z)` est
-simulé exactement. Deux réductions de variance : antithétiques (`Z, −Z`) et variable de
-contrôle `X = e^{−rT} S_T` (espérance connue `S0 e^{−qT}`). Le β de contrôle est estimé
-sur les moyennes de paires antithétiques — l'estimer sur les tirages individuels rend la
-combinaison moins efficace que le contrôle seul.
+**Monte Carlo pricer.** Under the risk-neutral measure,
+`S_T = S0·exp((r − q − σ²/2)T + σ√T·Z)` is simulated exactly. Two variance-reduction
+techniques are implemented:
+- *Antithetic variates*: each draw `Z` is paired with `−Z`.
+- *Control variate*: `X = e^{−rT}·S_T`, whose expectation `S0·e^{−qT}` is known.
 
-**Couverture.** Le trader vend l'option au prix BS(σ_imp), achète Δ actions et place le
-reste au taux r. À chacune des N dates équidistantes il rebalance au delta BS(σ_imp). Le
-sous-jacent suit un GBM de vol réelle σ_réel. Le P&L final actualisé est
+When both are combined, the control-variate coefficient β is estimated on the
+antithetic pair averages (the i.i.d. samples). Estimating it on individual draws
+makes the combination *worse* than the control variate alone.
 
-`P&L = e^{−rT} [ cash_T + Δ_{T−} S_T − payoff(S_T) ]`.
+**Discrete delta hedging.** The trader sells the option at BS(σ_impl), buys Δ shares
+and invests the rest at rate r. At each of N equally spaced dates, the position is
+rebalanced to the BS delta at σ_impl. The underlying follows a GBM with realised
+vol σ_real. The discounted final P&L is
 
-Coûts de transaction proportionnels `tc · |ΔΔ| · S` en option.
+`P&L = e^{−rT} · [ cash_T + Δ_{T−}·S_T − payoff(S_T) ]`
 
-**Théorie de référence.**
-- Vol correcte : P&L d'espérance ≈ 0 et d'écart-type
+Optional proportional transaction costs: `tc · |ΔΔ| · S` at each rebalance.
+
+**Reference theory.**
+- Correct vol: P&L has mean ≈ 0 and standard deviation
   `σ_PnL ≈ √(π/4) · vega · σ / √N` (Derman & Kamal, 1999).
-- Vol mal spécifiée : `E[P&L] ≈ BS(σ_imp) − BS(σ_réel)`, soit
-  `½ ∫ Γ S² (σ_imp² − σ_réel²) dt` avec gamma à σ_imp.
+- Mis-specified vol: `E[P&L] ≈ BS(σ_impl) − BS(σ_real)`, i.e.
+  `½ ∫ Γ·S²·(σ_impl² − σ_real²) dt` with gamma evaluated at σ_impl.
 
-## Résultats (ATM, S0 = K = 100, T = 1, r = 2 %, 20 000 trajectoires)
+## Results
 
-| Étude | Constat |
+ATM call unless stated otherwise: S0 = K = 100, T = 1 year, r = 2%, 20,000 paths per hedging simulation.
+
+### 1. Monte Carlo pricer
+
+![MC vs Black-Scholes](results/01b_mc_vs_bs.png)
+
+- **Validation against Black-Scholes** on 60 options (strikes 80–120, vols 10/20/40%,
+  maturities 3 months and 1 year, calls and puts, 200k paths each): the BS price lies
+  inside the 95% confidence interval for 56 of 60 options, with no pattern by strike,
+  vol or maturity. Mean z-score −0.07 (expected 0), largest absolute error 0.016.
+  Re-running over 480 options with different seeds gives a mean z of −0.02 and a
+  standard deviation of 1.04: the pricer is unbiased and its confidence intervals
+  are correctly calibrated.
+- **ATM call, 500k paths**: 8.9088 ± 0.0082 vs BS 8.9160.
+- **Variance reduction** (`01_mc_convergence.png`): ×1.7 with antithetic variates,
+  ×5.4 with the control variate, ×23 with both. All methods converge at the same
+  1/√n rate; variance reduction lowers the constant, not the exponent.
+
+### 2. Hedging error vs volatility and rebalancing frequency
+
+![Hedging error heatmap](results/04_heatmap_rel_std.png)
+
+| Study | Finding |
 |---|---|
-| Pricer MC | 500k trajectoires : 8,909 ± 0,008 vs BS 8,916. Réduction de variance ×1,7 (antithétique), ×5,4 (contrôle), ×23 (les deux). |
-| Erreur vs N | Pente log-log −0,487 pour toutes les vols (théorie −0,5). Simulé / Derman–Kamal ≈ 0,98 (0,92 à N = 4, où l'asymptotique est grossière). |
-| Erreur vs σ | Écart-type absolu ≈ linéaire en σ (vega ATM quasi constant). En **% de la prime** il dépend presque uniquement de N : ~10 % à N = 52, ~5 % à N = 252, ~2,5 % à N = 1008. |
-| Distribution | P&L centré, queues épaisses à faible N (le gamma concentre l'erreur près du strike à l'approche de la maturité). |
-| σ_réel ≠ σ_imp | Biais simulé = BS(σ_imp) − BS(σ_réel) à 0,01 près ; vendre à 20 % une vol réalisée de 30 % coûte ≈ 3,9. La dispersion augmente aussi avec l'écart de vol. |
-| Coûts (10 pb) | Risque ↓ en 1/√N, coûts ↑ ≈ √N : le compromis coûts + écart-type atteint son minimum vers N ≈ 250 (quotidien). Au-delà, les coûts dominent et ajoutent même de la variance. |
+| Error vs N | Log-log slope −0.487 for every vol (theory −0.5). Simulated / Derman–Kamal ≈ 0.98 (0.92 at N = 4, where the asymptotic formula is rough). |
+| Error vs σ | Absolute error is roughly linear in σ (ATM vega is nearly constant). As a **% of the premium** it depends almost only on N: ~10% weekly, ~5% daily, ~2.5% at N = 1008. |
+| P&L distribution | Centred on zero, fat-tailed at low N: gamma concentrates the error near the strike close to expiry (`05_pnl_distributions.png`). |
 
-Les graphiques sont dans `results/` (`01_…` à `07_…`), les tableaux en CSV.
+### 3. Extensions
 
-## Pistes d'extension
+| Study | Finding |
+|---|---|
+| σ_real ≠ σ_impl (`06_vol_mismatch.png`) | Simulated bias matches BS(σ_impl) − BS(σ_real) to within 0.01. Selling at 20% vol when realised vol is 30% costs ≈ 3.9. Dispersion also grows with the vol gap. |
+| Transaction costs, 10 bp (`07_tc_tradeoff.png`) | Risk falls as 1/√N while costs grow ≈ √N: the costs + std-dev criterion is minimised around N ≈ 250 (daily). Beyond that, costs dominate. |
 
-Vol stochastique (Heston) pour la vol réalisée, couverture à bandes (Whalley–Wilmott)
-plutôt qu'à dates fixes, delta de Leland avec vol ajustée des coûts, options barrières.
+All charts are in `results/` and the underlying tables are saved as CSV files.
+
+## Possible extensions
+
+Stochastic volatility (Heston) for the realised vol, band-based hedging
+(Whalley–Wilmott) instead of fixed dates, Leland's cost-adjusted volatility,
+path-dependent payoffs (barriers, Asians).
+
+## Reference
+
+Derman, E. & Kamal, M. (1999). *When You Cannot Hedge Continuously: The Corrections
+to Black-Scholes*. Risk, 12(1), 82–85.

@@ -1,8 +1,8 @@
-"""Pricer Monte Carlo pour options européennes sous Black-Scholes (GBM).
+"""Monte Carlo pricer for European options under Black-Scholes (GBM).
 
-- Simulation exacte du GBM (pas d'erreur de discrétisation pour un payoff terminal).
-- Réduction de variance : variables antithétiques et/ou variable de contrôle (sous-jacent actualisé).
-- Retourne le prix, l'erreur standard et l'intervalle de confiance à 95 %.
+- Exact GBM simulation (no discretisation error for a terminal payoff).
+- Variance reduction: antithetic variates and/or a control variate (discounted underlying).
+- Returns the price, its standard error and the 95% confidence interval.
 """
 from __future__ import annotations
 
@@ -23,14 +23,14 @@ class MCResult:
 
     def __str__(self) -> str:
         lo, hi = self.ci95
-        return f"{self.price:.4f} ± {1.96 * self.std_error:.4f} (IC95 [{lo:.4f}, {hi:.4f}], n={self.n_paths})"
+        return f"{self.price:.4f} ± {1.96 * self.std_error:.4f} (95% CI [{lo:.4f}, {hi:.4f}], n={self.n_paths})"
 
 
 def simulate_gbm_paths(S0, r, sigma, T, n_steps, n_paths, q=0.0, rng=None, antithetic=False):
-    """Trajectoires GBM sur une grille uniforme, forme (n_paths, n_steps + 1).
+    """GBM paths on a uniform grid, shape (n_paths, n_steps + 1).
 
-    Schéma exact : S_{t+dt} = S_t * exp((r - q - sigma^2/2) dt + sigma sqrt(dt) Z).
-    Avec antithetic=True, la seconde moitié des trajectoires utilise -Z.
+    Exact scheme: S_{t+dt} = S_t * exp((r - q - sigma^2/2) dt + sigma sqrt(dt) Z).
+    With antithetic=True, the second half of the paths uses -Z.
     """
     rng = np.random.default_rng(rng)
     dt = T / n_steps
@@ -46,12 +46,14 @@ def simulate_gbm_paths(S0, r, sigma, T, n_steps, n_paths, q=0.0, rng=None, antit
 
 def mc_european_price(S0, K, T, r, sigma, option="call", q=0.0, n_paths=200_000,
                       antithetic=True, control_variate=True, seed=None) -> MCResult:
-    """Prix Monte Carlo d'une option européenne.
+    """Monte Carlo price of a European option.
 
-    Variable de contrôle : X = e^{-rT} S_T, d'espérance connue S0 e^{-qT}.
-    Avec les antithétiques, l'erreur standard est calculée sur les moyennes de paires
-    (les deux tirages d'une paire ne sont pas indépendants).
+    Control variate: X = e^{-rT} S_T, whose expectation S0 e^{-qT} is known.
+    With antithetic variates, the i.i.d. samples are the pair averages, so both the
+    standard error and the control-variate coefficient are estimated on them.
     """
+    if option not in ("call", "put"):
+        raise ValueError("option must be 'call' or 'put'")
     rng = np.random.default_rng(seed)
     if antithetic:
         Z = rng.standard_normal(n_paths // 2)
@@ -63,13 +65,13 @@ def mc_european_price(S0, K, T, r, sigma, option="call", q=0.0, n_paths=200_000,
     payoff = disc * (np.maximum(ST - K, 0.0) if option == "call" else np.maximum(K - ST, 0.0))
 
     X = disc * ST
-    if antithetic:  # échantillons i.i.d. = moyennes de paires
+    if antithetic:  # i.i.d. samples = pair averages
         m = len(Z) // 2
         payoff, X = 0.5 * (payoff[:m] + payoff[m:]), 0.5 * (X[:m] + X[m:])
 
-    if control_variate:
-        # β estimé sur les mêmes échantillons i.i.d. (après appariement), sinon la
-        # combinaison antithétique + contrôle est sous-optimale.
+    if control_variate and payoff.var() > 0:
+        # beta is estimated on the same i.i.d. samples (after pairing); estimating it on
+        # individual draws makes antithetic + control worse than the control alone.
         cov = np.cov(payoff, X)
         beta = cov[0, 1] / cov[1, 1]
         payoff = payoff - beta * (X - S0 * np.exp(-q * T))

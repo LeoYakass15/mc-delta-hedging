@@ -1,4 +1,4 @@
-"""mchedge : pricing Monte Carlo et analyse de la couverture delta discrète."""
+"""mchedge: Monte Carlo pricing and discrete delta-hedging analysis."""
 from .black_scholes import bs_delta, bs_gamma, bs_price, bs_vega
 from .hedging import HedgeResult, derman_kamal_std, simulate_delta_hedge
 from .monte_carlo import MCResult, mc_european_price, simulate_gbm_paths
